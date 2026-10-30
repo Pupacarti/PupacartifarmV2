@@ -1,0 +1,94 @@
+Lua
+local UserInputService = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+local Workspace = game:GetService("Workspace")
+local Players = game:GetService("Players")
+
+local LocalPlayer = Players.LocalPlayer
+local Camera = Workspace.CurrentCamera
+local aiming = false
+
+-- 1. ฟังก์ชันหาซอมบี้ที่อยู่ใกล้เมาส์ที่สุด (ไม่ล็อกผู้เล่น)
+local function getClosestZombieToMouse()
+    local closestZombie = nil
+    local shortestDistance = math.huge
+
+    for _, obj in pairs(Workspace:GetDescendants()) do
+        -- ตรวจสอบว่าเป็นโมเดลที่มีหัวและเลือด
+        if obj:IsA("Model") and obj:FindFirstChild("Humanoid") and obj:FindFirstChild("Head") then
+            -- เงื่อนไขสำคัญ: ต้อง "ไม่ใช่ผู้เล่น"
+            if not Players:GetPlayerFromCharacter(obj) then
+                -- (ออปชันเสริม) เช็คชื่อว่ามีคำว่า Zombie หรืออยู่ในโฟลเดอร์ซอมบี้
+                if obj.Name:lower():find("zombie") or (obj.Parent and obj.Parent.Name == "Zombies") then
+                    if obj.Humanoid.Health > 0 then
+                        local headPosition, onScreen = Camera:WorldToViewportPoint(obj.Head.Position)
+                        
+                        if onScreen then
+                            local mouseLocation = UserInputService:GetMouseLocation()
+                            local distance = (Vector2.new(headPosition.X, headPosition.Y) - mouseLocation).Magnitude
+
+                            if distance < shortestDistance then
+                                closestZombie = obj
+                                shortestDistance = distance
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return closestZombie
+end
+
+-- 2. ควบคุมการคลิกขวาเพื่อเล็ง
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if not gameProcessed and input.UserInputType == Enum.UserInputType.MouseButton2 then
+        aiming = true
+    end
+end)
+
+UserInputService.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton2 then
+        aiming = false
+    end
+end)
+
+-- 3. ล็อกเป้ากล้องไปที่หัวซอมบี้
+RunService.RenderStepped:Connect(function()
+    if aiming then
+        local target = getClosestZombieToMouse()
+        if target and target:FindFirstChild("Head") then
+            Camera.CFrame = CFrame.new(Camera.CFrame.Position, target.Head.Position)
+            
+            -- วิธีที่โปรแกรมโกงทำ Insta-kill (หากเซิร์ฟเวอร์ไม่มีระบบป้องกัน):
+            -- 1. ยิง RemoteEvent ไปบอกเซิร์ฟเวอร์ว่ายิงโดนหัวเป้าหมายนี้
+            -- 2. หรือใช้คำสั่งจำลองการคลิกซ้ายอัตโนมัติเมื่อเป้าตรงหัว เช่น mouse1click()
+        end
+    end
+end)
+
+-- 4. Auto-Interact (กด E อัตโนมัติเพื่อเก็บของหรือทำแอคชันเมื่อซอมบี้ตาย)
+task.spawn(function()
+    while task.wait(0.1) do
+        -- ค้นหาปุ่มกด E (ProximityPrompt) รอบตัว
+        for _, prompt in pairs(Workspace:GetDescendants()) do
+            if prompt:IsA("ProximityPrompt") then
+                if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
+                    -- ถ้าระยะห่างอยู่ในระยะที่ตั้งไว้ให้กดได้
+                    local distance = (LocalPlayer.Character.HumanoidRootPart.Position - prompt.Parent.Position).Magnitude
+                    if distance <= prompt.MaxActivationDistance then
+                        -- โปรแกรมรันสคริปต์ (Executor) มักจะมีฟังก์ชัน fireproximityprompt ให้ใช้ข้ามขั้นตอน
+                        if fireproximityprompt then
+                            fireproximityprompt(prompt)
+                        else
+                            -- วิธีจำลองการกดแบบปกติ
+                            prompt:InputHoldBegin()
+                            task.wait(prompt.HoldDuration)
+                            prompt:InputHoldEnd()
+                        end
+                    end
+                end
+            end
+        end
+    end
+end)
