@@ -1,28 +1,30 @@
-Lua
+local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
-local Players = game:GetService("Players")
 
 local LocalPlayer = Players.LocalPlayer
 local Camera = Workspace.CurrentCamera
-local aiming = false
 
--- 1. ฟังก์ชันหาซอมบี้ที่อยู่ใกล้เมาส์ที่สุด (ไม่ล็อกผู้เล่น)
+-- ตัวแปรควบคุมสถานะ
+local scriptActive = false -- ควบคุมเปิด/ปิดสคริปต์ทั้งหมดจาก UI
+local aiming = false       -- สถานะว่ากำลังกดคลิกขวาอยู่หรือไม่
+
+-- ==========================================
+-- 1. ฟังก์ชันหาหัวซอมบี้ (ข้ามผู้เล่น)
+-- ==========================================
 local function getClosestZombieToMouse()
     local closestZombie = nil
     local shortestDistance = math.huge
 
     for _, obj in pairs(Workspace:GetDescendants()) do
-        -- ตรวจสอบว่าเป็นโมเดลที่มีหัวและเลือด
         if obj:IsA("Model") and obj:FindFirstChild("Humanoid") and obj:FindFirstChild("Head") then
-            -- เงื่อนไขสำคัญ: ต้อง "ไม่ใช่ผู้เล่น"
+            -- ตรวจสอบว่าไม่ใช่ผู้เล่น
             if not Players:GetPlayerFromCharacter(obj) then
-                -- (ออปชันเสริม) เช็คชื่อว่ามีคำว่า Zombie หรืออยู่ในโฟลเดอร์ซอมบี้
+                -- เช็คชื่อ (ปรับแก้ตามชื่อโมเดลซอมบี้ในเกมของคุณ)
                 if obj.Name:lower():find("zombie") or (obj.Parent and obj.Parent.Name == "Zombies") then
                     if obj.Humanoid.Health > 0 then
                         local headPosition, onScreen = Camera:WorldToViewportPoint(obj.Head.Position)
-                        
                         if onScreen then
                             local mouseLocation = UserInputService:GetMouseLocation()
                             local distance = (Vector2.new(headPosition.X, headPosition.Y) - mouseLocation).Magnitude
@@ -40,7 +42,7 @@ local function getClosestZombieToMouse()
     return closestZombie
 end
 
--- 2. ควบคุมการคลิกขวาเพื่อเล็ง
+-- ควบคุมการคลิกขวา (จะเล็งก็ต่อเมื่อ UI เปิด Status: ON)
 UserInputService.InputBegan:Connect(function(input, gameProcessed)
     if not gameProcessed and input.UserInputType == Enum.UserInputType.MouseButton2 then
         aiming = true
@@ -53,42 +55,142 @@ UserInputService.InputEnded:Connect(function(input)
     end
 end)
 
--- 3. ล็อกเป้ากล้องไปที่หัวซอมบี้
+-- อัปเดตมุมกล้องทุกเฟรม
 RunService.RenderStepped:Connect(function()
-    if aiming then
+    if scriptActive and aiming then
         local target = getClosestZombieToMouse()
         if target and target:FindFirstChild("Head") then
             Camera.CFrame = CFrame.new(Camera.CFrame.Position, target.Head.Position)
-            
-            -- วิธีที่โปรแกรมโกงทำ Insta-kill (หากเซิร์ฟเวอร์ไม่มีระบบป้องกัน):
-            -- 1. ยิง RemoteEvent ไปบอกเซิร์ฟเวอร์ว่ายิงโดนหัวเป้าหมายนี้
-            -- 2. หรือใช้คำสั่งจำลองการคลิกซ้ายอัตโนมัติเมื่อเป้าตรงหัว เช่น mouse1click()
         end
     end
 end)
 
--- 4. Auto-Interact (กด E อัตโนมัติเพื่อเก็บของหรือทำแอคชันเมื่อซอมบี้ตาย)
+-- ==========================================
+-- 2. ฟังก์ชัน Auto-Interact (กด E อัตโนมัติ)
+-- ==========================================
 task.spawn(function()
     while task.wait(0.1) do
-        -- ค้นหาปุ่มกด E (ProximityPrompt) รอบตัว
-        for _, prompt in pairs(Workspace:GetDescendants()) do
-            if prompt:IsA("ProximityPrompt") then
-                if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
-                    -- ถ้าระยะห่างอยู่ในระยะที่ตั้งไว้ให้กดได้
-                    local distance = (LocalPlayer.Character.HumanoidRootPart.Position - prompt.Parent.Position).Magnitude
-                    if distance <= prompt.MaxActivationDistance then
-                        -- โปรแกรมรันสคริปต์ (Executor) มักจะมีฟังก์ชัน fireproximityprompt ให้ใช้ข้ามขั้นตอน
-                        if fireproximityprompt then
-                            fireproximityprompt(prompt)
-                        else
-                            -- วิธีจำลองการกดแบบปกติ
-                            prompt:InputHoldBegin()
-                            task.wait(prompt.HoldDuration)
-                            prompt:InputHoldEnd()
+        -- จะทำงานก็ต่อเมื่อ UI เปิด Status: ON
+        if scriptActive then
+            for _, prompt in pairs(Workspace:GetDescendants()) do
+                if prompt:IsA("ProximityPrompt") then
+                    if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
+                        local distance = (LocalPlayer.Character.HumanoidRootPart.Position - prompt.Parent.Position).Magnitude
+                        if distance <= prompt.MaxActivationDistance then
+                            -- จำลองการกด (หรือใช้คำสั่งของตัวรันสคริปต์)
+                            if fireproximityprompt then
+                                fireproximityprompt(prompt)
+                            else
+                                prompt:InputHoldBegin()
+                                task.wait(prompt.HoldDuration)
+                                prompt:InputHoldEnd()
+                            end
                         end
                     end
                 end
             end
         end
+    end
+end)
+
+-- ==========================================
+-- 3. ระบบ UI
+-- ==========================================
+local guiParent = LocalPlayer:WaitForChild("PlayerGui") 
+
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "ZombieScriptUI"
+ScreenGui.ResetOnSpawn = false
+ScreenGui.Parent = guiParent
+
+-- ปุ่มเล็กๆ มุมซ้ายบน สำหรับซ่อน/แสดงเมนู
+local ToggleButton = Instance.new("TextButton")
+ToggleButton.Size = UDim2.new(0, 100, 0, 40)
+ToggleButton.Position = UDim2.new(0, 20, 0, 20)
+ToggleButton.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+ToggleButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+ToggleButton.Text = "เปิด/ปิด เมนู"
+ToggleButton.Font = Enum.Font.SourceSansBold
+ToggleButton.TextSize = 16
+ToggleButton.Parent = ScreenGui
+
+-- หน้าต่างเมนูหลัก
+local MainFrame = Instance.new("Frame")
+MainFrame.Size = UDim2.new(0, 400, 0, 200)
+MainFrame.Position = UDim2.new(0.5, -200, 0.5, -100)
+MainFrame.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
+MainFrame.Visible = false
+MainFrame.Parent = ScreenGui
+
+-- แถบหัวข้อ (จับลากได้)
+local Title = Instance.new("TextLabel")
+Title.Size = UDim2.new(1, 0, 0, 40)
+Title.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
+Title.TextColor3 = Color3.fromRGB(255, 255, 255)
+Title.Text = "  Zombie Farmer Helper"
+Title.TextXAlignment = Enum.TextXAlignment.Left
+Title.Font = Enum.Font.SourceSansBold
+Title.TextSize = 18
+Title.Parent = MainFrame
+
+-- ปุ่มสลับเปิด/ปิดระบบด้านใน
+local ScriptToggleBtn = Instance.new("TextButton")
+ScriptToggleBtn.Size = UDim2.new(0, 360, 0, 50)
+ScriptToggleBtn.Position = UDim2.new(0, 20, 0, 80)
+ScriptToggleBtn.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
+ScriptToggleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+ScriptToggleBtn.Text = "Status: OFF"
+ScriptToggleBtn.Font = Enum.Font.SourceSansBold
+ScriptToggleBtn.TextSize = 24
+ScriptToggleBtn.Parent = MainFrame
+
+-- ระบบลากหน้าต่าง UI (Drag)
+local dragging, dragInput, dragStart, startPos
+Title.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        dragging = true
+        dragStart = input.Position
+        startPos = MainFrame.Position
+        input.Changed:Connect(function()
+            if input.UserInputState == Enum.UserInputState.End then dragging = false end
+        end)
+    end
+end)
+Title.InputChanged:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+        dragInput = input
+    end
+end)
+UserInputService.InputChanged:Connect(function(input)
+    if input == dragInput and dragging then
+        local delta = input.Position - dragStart
+        MainFrame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+    end
+end)
+
+-- ฟังก์ชันเปิด/ปิดหน้าต่าง
+local function toggleUI()
+    MainFrame.Visible = not MainFrame.Visible
+end
+
+ToggleButton.MouseButton1Click:Connect(toggleUI)
+
+-- กดปุ่ม Right Shift เพื่อเปิด/ปิดหน้าต่าง
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if not gameProcessed and input.KeyCode == Enum.KeyCode.RightShift then
+        toggleUI()
+    end
+end)
+
+-- การทำงานของปุ่ม Status
+ScriptToggleBtn.MouseButton1Click:Connect(function()
+    scriptActive = not scriptActive
+    if scriptActive then
+        ScriptToggleBtn.BackgroundColor3 = Color3.fromRGB(50, 200, 50)
+        ScriptToggleBtn.Text = "Status: ON"
+    else
+        ScriptToggleBtn.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
+        ScriptToggleBtn.Text = "Status: OFF"
+        aiming = false -- ยกเลิกการเล็งเผื่อปุ่มค้าง
     end
 end)
